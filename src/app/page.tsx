@@ -5,11 +5,11 @@ import { Chess, Square } from 'chess.js';
 import { engineInstance } from '@/lib/chessEngine';
 import { RotateCcw } from 'lucide-react';
 
-// Import our new modules
 import { HistoricalMove } from '@/types/chess';
 import InteractiveBoard from '@/components/InteractiveBoard';
 import LiveMetrics from '@/components/LiveMetrics';
 import NotationMatrix from '@/components/NotationMatrix';
+import AiCoachPanel from '@/components/AiCoachPanel'; // <-- NEW IMPORT
 
 export default function Home() {
   const [game, setGame] = useState<Chess>(new Chess());
@@ -24,6 +24,10 @@ export default function Home() {
 
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [optionSquares, setOptionSquares] = useState<Record<string, React.CSSProperties>>({});
+
+  // --- NEW: AI Coach States ---
+  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+  const [isAiThinking, setIsAiThinking] = useState<boolean>(false);
 
   useEffect(() => {
     engineInstance.init();
@@ -44,6 +48,9 @@ export default function Home() {
 
   const analyzeCurrentPosition = (fenString: string, lastAppliedMove: any) => {
     setIsEngineThinking(true);
+    // Reset AI explanation when a new move is played
+    setAiExplanation(null); 
+
     engineInstance.evaluatePosition(
       fenString,
       12,
@@ -85,6 +92,46 @@ export default function Home() {
         setIsEngineThinking(false);
       }
     );
+  };
+
+  // --- NEW: API Fetch Function ---
+  const handleExplainLastMove = async () => {
+    if (detailedHistory.length === 0) return;
+    
+    setIsAiThinking(true);
+    const lastMove = detailedHistory[detailedHistory.length - 1];
+    
+    // Grab the evaluation from right before this move was made
+    const previousEval = detailedHistory.length > 1 
+      ? detailedHistory[detailedHistory.length - 2].evaluation 
+      : '0.00';
+
+    try {
+      const response = await fetch('/api/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fen: gamePosition,
+          move: lastMove.san,
+          previousEval: previousEval,
+          currentEval: lastMove.evaluation,
+          bestMove: bestMove
+        })
+      });
+
+      const data = await response.json();
+      
+      if (response.ok) {
+        setAiExplanation(data.explanation);
+      } else {
+        setAiExplanation("AI Coach encountered an error. Please try again.");
+      }
+    } catch (error) {
+      console.log(error);
+      setAiExplanation("Network error connecting to the AI Coach.");
+    } finally {
+      setIsAiThinking(false);
+    }
   };
 
   const getMoveOptions = (square: Square) => {
@@ -146,6 +193,7 @@ export default function Home() {
         return true;
       }
     } catch (error) {
+      console.log(error);
       return false;
     }
     return false;
@@ -172,7 +220,10 @@ export default function Home() {
     setLastEvalScore(0.00);
     setBestMove('-');
     setIsEngineThinking(false);
+    setAiExplanation(null);
   }
+
+  const lastMove = detailedHistory.length > 0 ? detailedHistory[detailedHistory.length - 1] : null;
 
   return (
     <main className="min-h-screen bg-[#121212] text-[#f5f5f7] p-6 md:p-12 flex flex-col items-center justify-center font-sans antialiased">
@@ -196,15 +247,24 @@ export default function Home() {
           onPieceDrop={onDrop}
           onSquareClick={onSquareClick}
           optionSquares={optionSquares}
-          lastMove={detailedHistory.length > 0 ? detailedHistory[detailedHistory.length - 1] : null}
+          lastMove={lastMove}
         />
         
-        <div className="lg:col-span-5 grid grid-cols-1 gap-6">
+        <div className="lg:col-span-5 flex flex-col gap-6">
           <LiveMetrics 
             currentEval={currentEval}
             bestMove={bestMove}
             isEngineThinking={isEngineThinking}
           />
+          
+          {/* NEW: AI Coach Component Injected into Layout */}
+          <AiCoachPanel 
+            lastMove={lastMove}
+            explanation={aiExplanation}
+            isLoading={isAiThinking}
+            onExplainRequest={handleExplainLastMove}
+          />
+
           <NotationMatrix detailedHistory={detailedHistory} />
         </div>
       </div>
